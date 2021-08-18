@@ -291,8 +291,11 @@ class Beautify:
                         # we want to return 0 (success) only if the given file is already
                         # well formatted:
                         error = result != data
-                        if error:
-                            self.print_diff(data, result)
+                        self.write_file(path + ".out", result)
+
+                        # print out the changes
+                        for line in difflib.unified_diff(data.split('\n'), result.split('\n'), lineterm=''):
+                            print(line)
                 else:
                     if self.backup:
                         self.write_file(path + ".bak", data)
