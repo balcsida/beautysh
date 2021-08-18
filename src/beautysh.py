@@ -281,6 +281,7 @@ class Beautify:
         if path == "-":
             data = sys.stdin.read()
             result, error = self.beautify_string(data, "(stdin)")
+            result = self.change_argument_order(result)
             sys.stdout.write(result)
         else:  # named file
             data = self.read_file(path)
@@ -301,6 +302,49 @@ class Beautify:
                         self.write_file(path + ".bak", data)
                     self.write_file(path, result)
         return error
+
+    def change_argument_order(self, data):
+    """Checks if the argument calls are in ABC order in the line. If not, then change the order."""
+    regexp = re.compile(r' -{1,2}[a-zA-Z]+')
+    black_list = "|,&;"
+
+    for line in data.split('\n'):
+        # If the line contains the [ character, then it's most likely an If statement, which could give us false positive.
+        if not "[" in line and regexp.search(line): 
+            first_index = 0
+            splits = line.split(' ')
+            arguments={}
+            
+            for j in range(1, len(splits)):
+                # If the split matches the regex, then it's an argument
+                if regexp.search(" %s"%(splits[j])):
+                    # Sometimes there are function letters, which need to be addressed
+                    if(first_index == 0):
+                        first_index = j
+                    # If the next split contains any of the blacklisted character or is an argument, then no value pair required
+                    if(any(c in black_list for c in splits[j + 1]) and not regexp.search(" %s"%(splits[j + 1]))):
+                        arguments[splits[j]] = ""
+                        # Increment the last index, so we know where was the last argument
+                        last_index = j
+                    else:
+                        arguments[splits[j]] = " %s"%(splits[j + 1])
+                        # Increment the last index, so we know where was the last argument
+                        last_index = j + 1
+            # The first split will always be the command/script call
+            new_line = splits[0]
+            # Adding the function letters back to the beginning of the line
+            for j in range(1, first_index):
+                new_line += " %s"%(splits[j])
+            # Ordering the selected arguments by ABC and putting them in with their value pairs
+            for ordered_agrument in sorted(arguments):
+                new_line += " %s%s"%(ordered_agrument,arguments[ordered_agrument])
+            # The range between the last argument index and the length of the split is the non argument values
+            for j in range(last_index + 1, len(splits)):
+                new_line += " %s"%(splits[j])
+            # Replacing the old line with the new
+            data = data.replace(line, new_line)
+            continue
+    return data
 
     def color_diff(self, diff):
         for line in diff:
