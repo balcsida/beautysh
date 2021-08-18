@@ -282,6 +282,7 @@ class Beautify:
             data = sys.stdin.read()
             result, error = self.beautify_string(data, "(stdin)")
             result = self.change_argument_order(result)
+            result = self.change_function_order(result)
             sys.stdout.write(result)
         else:  # named file
             data = self.read_file(path)
@@ -345,6 +346,47 @@ class Beautify:
             data = data.replace(line, new_line)
             continue
     return data
+
+    def change_function_order(self, data):
+    """Checks if the functions are in ABC order. If not, then change the order."""
+    regexp = re.compile(r'function.*')
+    lines = data.split('\n')
+    functions={}
+    line_number=0
+    start_line_number = -1
+
+    for line in lines:
+        # If the line matches the regex, then we consider it as a function start
+        if regexp.search(line):
+            # Saving the function name and the line it's on
+            start_line = line.replace(" {", "").replace("function ", "")
+            start_line_number = line_number
+
+        # If there is already a function definition found and the line only consist of }, the script assumes that this is the end of the function
+        if start_line_number > -1 and line == "}":
+            # Saving the function name (key) and the start and stop line numbers (value)
+            functions[start_line] = "%s;%s"%(start_line_number,line_number)
+            start_line_number = -1
+
+        line_number += 1
+    
+    new_data = ""
+    # Adding all the lines before the first function declaration to the new_data string.
+    for i in range(int(functions[list(functions)[0]].split(';')[0])):
+        new_data += "%s\n"%(lines[i])
+
+    # Adding the ordered functions to the new_data string.
+    for function in sorted(functions):
+        split = functions[function].split(';')
+        for i in range(int(split[0]), int(split[1]) + 1):
+            new_data += "%s\n"%(lines[i])
+        new_data += "\n"
+
+    # Adding all the lines after the last function declaration to the new_data string.
+    for i in range(int(functions[list(functions)[len(functions) -1]].split(';')[1]) + 1, len(lines)):
+        new_data += "%s"%(lines[i])
+    
+    return new_data
 
     def color_diff(self, diff):
         for line in diff:
