@@ -275,6 +275,90 @@ class Beautify:
             sys.stderr.write("File %s: error: indent/outdent mismatch: %d.\n" % (path, tab))
         return "\n".join(output), error
 
+    def change_argument_order(self, data):
+        """Checks if the argument calls are in ABC order in the line. If not, then change the order."""
+        regexp = re.compile(r' -{1,2}[a-zA-Z]+')
+        black_list = "|,&;"
+
+        for line in data.split('\n'):
+            # If the line contains the [ character, then it's most likely an If statement, which could give us false positive.
+            if not "[" in line and regexp.search(line): 
+                first_index = 0
+                splits = line.split(' ')
+                arguments={}
+                
+                for j in range(1, len(splits)):
+                    # If the split matches the regex, then it's an argument
+                    if regexp.search(" %s"%(splits[j])):
+                        # Sometimes there are function letters, which need to be addressed
+                        if(first_index == 0):
+                            first_index = j
+                        # If the next split contains any of the blacklisted character or is an argument, then no value pair required
+                        if(any(c in black_list for c in splits[j + 1]) and not regexp.search(" %s"%(splits[j + 1]))):
+                            arguments[splits[j]] = ""
+                            # Increment the last index, so we know where was the last argument
+                            last_index = j
+                        else:
+                            arguments[splits[j]] = " %s"%(splits[j + 1])
+                            # Increment the last index, so we know where was the last argument
+                            last_index = j + 1
+                # The first split will always be the command/script call
+                new_line = splits[0]
+                # Adding the function letters back to the beginning of the line
+                for j in range(1, first_index):
+                    new_line += " %s"%(splits[j])
+                # Ordering the selected arguments by ABC and putting them in with their value pairs
+                for ordered_agrument in sorted(arguments):
+                    new_line += " %s%s"%(ordered_agrument,arguments[ordered_agrument])
+                # The range between the last argument index and the length of the split is the non argument values
+                for j in range(last_index + 1, len(splits)):
+                    new_line += " %s"%(splits[j])
+                # Replacing the old line with the new
+                data = data.replace(line, new_line)
+                continue
+        return data
+
+    def change_function_order(self, data):
+        """Checks if the functions are in ABC order. If not, then change the order."""
+        regexp = re.compile(r'function.*')
+        lines = data.split('\n')
+        functions={}
+        line_number=0
+        start_line_number = -1
+
+        for line in lines:
+            # If the line matches the regex, then we consider it as a function start
+            if regexp.search(line):
+                # Saving the function name and the line it's on
+                start_line = line.replace(" {", "").replace("function ", "")
+                start_line_number = line_number
+
+            # If there is already a function definition found and the line only consist of }, the script assumes that this is the end of the function
+            if start_line_number > -1 and line == "}":
+                # Saving the function name (key) and the start and stop line numbers (value)
+                functions[start_line] = "%s;%s"%(start_line_number,line_number)
+                start_line_number = -1
+
+            line_number += 1
+        
+        new_data = ""
+        # Adding all the lines before the first function declaration to the new_data string.
+        for i in range(int(functions[list(functions)[0]].split(';')[0])):
+            new_data += "%s\n"%(lines[i])
+
+        # Adding the ordered functions to the new_data string.
+        for function in sorted(functions):
+            split = functions[function].split(';')
+            for i in range(int(split[0]), int(split[1]) + 1):
+                new_data += "%s\n"%(lines[i])
+            new_data += "\n"
+
+        # Adding all the lines after the last function declaration to the new_data string.
+        for i in range(int(functions[list(functions)[len(functions) -1]].split(';')[1]) + 1, len(lines)):
+            new_data += "%s"%(lines[i])
+        
+        return new_data
+
     def beautify_file(self, path):
         """Beautify bash script file."""
         error = False
@@ -287,6 +371,8 @@ class Beautify:
         else:  # named file
             data = self.read_file(path)
             result, error = self.beautify_string(data, path)
+            result = self.change_argument_order(result)
+            result = self.change_function_order(result)
             if data != result:
                 if self.check_only:
                     if not error:
@@ -303,90 +389,6 @@ class Beautify:
                         self.write_file(path + ".bak", data)
                     self.write_file(path, result)
         return error
-
-    def change_argument_order(self, data):
-    """Checks if the argument calls are in ABC order in the line. If not, then change the order."""
-    regexp = re.compile(r' -{1,2}[a-zA-Z]+')
-    black_list = "|,&;"
-
-    for line in data.split('\n'):
-        # If the line contains the [ character, then it's most likely an If statement, which could give us false positive.
-        if not "[" in line and regexp.search(line): 
-            first_index = 0
-            splits = line.split(' ')
-            arguments={}
-            
-            for j in range(1, len(splits)):
-                # If the split matches the regex, then it's an argument
-                if regexp.search(" %s"%(splits[j])):
-                    # Sometimes there are function letters, which need to be addressed
-                    if(first_index == 0):
-                        first_index = j
-                    # If the next split contains any of the blacklisted character or is an argument, then no value pair required
-                    if(any(c in black_list for c in splits[j + 1]) and not regexp.search(" %s"%(splits[j + 1]))):
-                        arguments[splits[j]] = ""
-                        # Increment the last index, so we know where was the last argument
-                        last_index = j
-                    else:
-                        arguments[splits[j]] = " %s"%(splits[j + 1])
-                        # Increment the last index, so we know where was the last argument
-                        last_index = j + 1
-            # The first split will always be the command/script call
-            new_line = splits[0]
-            # Adding the function letters back to the beginning of the line
-            for j in range(1, first_index):
-                new_line += " %s"%(splits[j])
-            # Ordering the selected arguments by ABC and putting them in with their value pairs
-            for ordered_agrument in sorted(arguments):
-                new_line += " %s%s"%(ordered_agrument,arguments[ordered_agrument])
-            # The range between the last argument index and the length of the split is the non argument values
-            for j in range(last_index + 1, len(splits)):
-                new_line += " %s"%(splits[j])
-            # Replacing the old line with the new
-            data = data.replace(line, new_line)
-            continue
-    return data
-
-    def change_function_order(self, data):
-    """Checks if the functions are in ABC order. If not, then change the order."""
-    regexp = re.compile(r'function.*')
-    lines = data.split('\n')
-    functions={}
-    line_number=0
-    start_line_number = -1
-
-    for line in lines:
-        # If the line matches the regex, then we consider it as a function start
-        if regexp.search(line):
-            # Saving the function name and the line it's on
-            start_line = line.replace(" {", "").replace("function ", "")
-            start_line_number = line_number
-
-        # If there is already a function definition found and the line only consist of }, the script assumes that this is the end of the function
-        if start_line_number > -1 and line == "}":
-            # Saving the function name (key) and the start and stop line numbers (value)
-            functions[start_line] = "%s;%s"%(start_line_number,line_number)
-            start_line_number = -1
-
-        line_number += 1
-    
-    new_data = ""
-    # Adding all the lines before the first function declaration to the new_data string.
-    for i in range(int(functions[list(functions)[0]].split(';')[0])):
-        new_data += "%s\n"%(lines[i])
-
-    # Adding the ordered functions to the new_data string.
-    for function in sorted(functions):
-        split = functions[function].split(';')
-        for i in range(int(split[0]), int(split[1]) + 1):
-            new_data += "%s\n"%(lines[i])
-        new_data += "\n"
-
-    # Adding all the lines after the last function declaration to the new_data string.
-    for i in range(int(functions[list(functions)[len(functions) -1]].split(';')[1]) + 1, len(lines)):
-        new_data += "%s"%(lines[i])
-    
-    return new_data
 
     def color_diff(self, diff):
         for line in diff:
