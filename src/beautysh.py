@@ -27,7 +27,6 @@ def main():
     """Call the main function."""
     Beautify().main()
 
-
 class Beautify:
     """Class to handle both module and non-module calls."""
 
@@ -281,39 +280,61 @@ class Beautify:
         black_list = "|,&;"
 
         for line in data.split('\n'):
-            # If the line contains the [ character, then it's most likely an If statement, which could give us false positive.
-            if not "[" in line and regexp.search(line): 
-                first_index = 0
-                splits = line.split(' ')
-                arguments={}
+            # If the line contains the [ character, then it's most likely an If statement, which could give us false positive. The black list is for not supported lines.
+            #if not any(c in black_list for c in line) and not "eval" in line and regexp.search(line): 
+            if not "[" in line and not "eval" in line and regexp.search(line): 
+                substrings = re.split(' [|&]{1,2} ',line)
+                pipes = re.findall(' [|&]{1,2} ',line)
                 
-                for j in range(1, len(splits)):
-                    # If the split matches the regex, then it's an argument
-                    if regexp.search(" %s"%(splits[j])):
-                        # Sometimes there are function letters, which need to be addressed
-                        if(first_index == 0):
-                            first_index = j
-                        # If the next split contains any of the blacklisted character or is an argument, then no value pair required
-                        if(any(c in black_list for c in splits[j + 1]) and not regexp.search(" %s"%(splits[j + 1]))):
-                            arguments[splits[j]] = ""
-                            # Increment the last index, so we know where was the last argument
-                            last_index = j
-                        else:
-                            arguments[splits[j]] = " %s"%(splits[j + 1])
-                            # Increment the last index, so we know where was the last argument
-                            last_index = j + 1
-                # The first split will always be the command/script call
-                new_line = splits[0]
-                # Adding the function letters back to the beginning of the line
-                for j in range(1, first_index):
-                    new_line += " %s"%(splits[j])
-                # Ordering the selected arguments by ABC and putting them in with their value pairs
-                for ordered_agrument in sorted(arguments):
-                    new_line += " %s%s"%(ordered_agrument,arguments[ordered_agrument])
-                # The range between the last argument index and the length of the split is the non argument values
-                for j in range(last_index + 1, len(splits)):
-                    new_line += " %s"%(splits[j])
-                # Replacing the old line with the new
+                for substring_index in range(len(substrings)):
+                    first_index = 0
+                    splits = substrings[substring_index].split(' ')
+                    splits_length = len(splits)
+                    arguments={}
+
+                    if regexp.search(substrings[substring_index]):
+                        for j in range(1, splits_length):
+                            # If the split matches the regex, then it's an argument
+                            if regexp.search(" %s"%(splits[j])):
+                                # Sometimes there are function letters, which need to be addressed
+                                if(first_index == 0):
+                                    first_index = j
+                                # If the next split contains any of the blacklisted character or is an argument, then no value pair required
+                                if(j + 1 == splits_length or (splits[j + 1][:1] != '"' and splits[j + 1][:2] != "\\\"" and (any(c in black_list for c in splits[j + 1]) or regexp.search(" %s"%(splits[j + 1]))))):
+                                    arguments[splits[j]] = ""
+                                    # Increment the last index, so we know where was the last argument
+                                    last_index = j
+                                else:
+                                    arguments[splits[j]] = " %s"%(splits[j + 1])
+                                    # Increment the last index, so we know where was the last argument
+                                    last_index = j + 1    
+                        # The first split will always be the command/script call
+                        new_substring = splits[0]
+                        # Adding the function letters back to the beginning of the line
+                        for j in range(1, first_index):
+                            new_substring += " %s"%(splits[j])
+                        # Ordering the selected arguments by ABC and putting them in with their value pairs
+                        for ordered_agrument in sorted([re.sub(r'^-*', '', w) for w in arguments]):
+                            if "-%s"%(ordered_agrument) in arguments:
+                                ordered_agrument = "-%s"%(ordered_agrument)
+                            elif "--%s"%(ordered_agrument) in arguments:
+                                ordered_agrument = "--%s"%(ordered_agrument)
+                            new_substring += " %s%s"%(ordered_agrument,arguments[ordered_agrument])
+                        # The range between the last argument index and the length of the split is the non argument values
+                        for j in range(last_index + 1, len(splits)):
+                            new_substring += " %s"%(splits[j])                          
+                    else:
+                        new_substring = splits[0]
+                        for j in range(1, splits_length):
+                            new_substring += " %s"%(splits[j])  
+                    
+                    # Replacing the old line with the new
+                    if substring_index > 0:
+                        new_line += pipes[substring_index -1] + new_substring
+                    else:
+                        new_line = new_substring
+
+
                 data = data.replace(line, new_line)
                 continue
         return data
@@ -321,6 +342,49 @@ class Beautify:
     def change_function_order(self, data):
         """Checks if the functions are in ABC order. If not, then change the order."""
         regexp = re.compile(r'function.*')
+        if regexp.search(data):
+            lines = data.split('\n')
+            functions={}
+            line_number=0
+            start_line_number = -1
+
+            for line in lines:
+                # If the line matches the regex, then we consider it as a function start
+                if regexp.search(line):
+                    # Saving the function name and the line it's on
+                    start_line = line.replace(" {", "").replace("function ", "")
+                    start_line_number = line_number
+
+                # If there is already a function definition found and the line only consist of }, the script assumes that this is the end of the function
+                if start_line_number > -1 and line == "}":
+                    # Saving the function name (key) and the start and stop line numbers (value)
+                    functions[start_line] = "%s;%s"%(start_line_number,line_number)
+                    start_line_number = -1
+
+                line_number += 1
+            
+            new_data = ""
+            # Adding all the lines before the first function declaration to the new_data string.
+            for i in range(int(functions[list(functions)[0]].split(';')[0])):
+                new_data += "%s\n"%(lines[i])
+
+            # Adding the ordered functions to the new_data string.
+            for function in sorted(functions):
+                split = functions[function].split(';')
+                for i in range(int(split[0]), int(split[1]) + 1):
+                    new_data += "%s\n"%(lines[i])
+                new_data += "\n"
+
+            # Adding all the lines after the last function declaration to the new_data string.
+            for i in range(int(functions[list(functions)[len(functions) -1]].split(';')[1]) + 1, len(lines)):
+                new_data += "%s"%(lines[i])
+            return new_data
+        else:
+            return data
+
+    def change_variable_order(self, data):
+        regexp_local = re.compile(r'local [a-zA-Z_]+')
+        regexp_standard = re.compile(r'[a-zA-Z_]+=')
         lines = data.split('\n')
         functions={}
         line_number=0
@@ -340,24 +404,6 @@ class Beautify:
                 start_line_number = -1
 
             line_number += 1
-        
-        new_data = ""
-        # Adding all the lines before the first function declaration to the new_data string.
-        for i in range(int(functions[list(functions)[0]].split(';')[0])):
-            new_data += "%s\n"%(lines[i])
-
-        # Adding the ordered functions to the new_data string.
-        for function in sorted(functions):
-            split = functions[function].split(';')
-            for i in range(int(split[0]), int(split[1]) + 1):
-                new_data += "%s\n"%(lines[i])
-            new_data += "\n"
-
-        # Adding all the lines after the last function declaration to the new_data string.
-        for i in range(int(functions[list(functions)[len(functions) -1]].split(';')[1]) + 1, len(lines)):
-            new_data += "%s"%(lines[i])
-        
-        return new_data
 
     def beautify_file(self, path):
         """Beautify bash script file."""
@@ -379,9 +425,8 @@ class Beautify:
                         # we want to return 0 (success) only if the given file is already
                         # well formatted:
                         error = result != data
-                        self.write_file(path + ".out", result)
-
                         # print out the changes
+                        print("%s\n"%(path))
                         for line in difflib.unified_diff(data.split('\n'), result.split('\n'), lineterm=''):
                             print(line)
                 else:
