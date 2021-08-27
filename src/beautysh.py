@@ -22,6 +22,7 @@ FUNCTION_STYLE_REGEX = [
 
 FUNCTION_STYLE_REPLACEMENT = [r"function \g<1>() ", r"function \g<1> ", r"\g<1>() "]
 
+errors = {}
 
 def main():
     """Call the main function."""
@@ -38,6 +39,9 @@ class Beautify:
         self.check_only = False
         self.apply_function_style = None  # default is no change based on function style
         self.color = True
+        self.argument_order = False
+        self.function_order = False
+        self.english = False
 
     def read_file(self, fp):
         """Read input file."""
@@ -274,24 +278,28 @@ class Beautify:
             sys.stderr.write("File %s: error: indent/outdent mismatch: %d.\n" % (path, tab))
         return "\n".join(output), error
 
-    def change_argument_order(self, data):
+    def change_argument_order(self, data, path):
         """Checks if the argument calls are in ABC order in the line. If not, then change the order."""
         regexp = re.compile(r' -{1,2}[a-zA-Z]+')
         black_list = "|,&;"
 
         for line in data.split('\n'):
-            # If the line contains the [ character, then it's most likely an If statement, which could give us false positive. The black list is for not supported lines.
-            #if not any(c in black_list for c in line) and not "eval" in line and regexp.search(line): 
+            # If the line contains the [ character, then it's most likely an If statement, which could give us false positive
+            # eval lines are currently not supported
             if not "[" in line and not "eval" in line and regexp.search(line): 
+                # Spliting the line into substrings by pipe or & characters
                 substrings = re.split(' [|&]{1,2} ',line)
+                # Saving the | and & characters for reconstruction
                 pipes = re.findall(' [|&]{1,2} ',line)
                 
                 for substring_index in range(len(substrings)):
                     first_index = 0
+                    # Spliting the substring by spaces
                     splits = substrings[substring_index].split(' ')
                     splits_length = len(splits)
                     arguments={}
 
+                    # If the substring matches the regex, it means that the string contains at least one argument
                     if regexp.search(substrings[substring_index]):
                         for j in range(1, splits_length):
                             # If the split matches the regex, then it's an argument
@@ -322,24 +330,29 @@ class Beautify:
                             new_substring += " %s%s"%(ordered_agrument,arguments[ordered_agrument])
                         # The range between the last argument index and the length of the split is the non argument values
                         for j in range(last_index + 1, len(splits)):
-                            new_substring += " %s"%(splits[j])                          
+                            new_substring += " %s"%(splits[j])         
+                    # Else the substring does not contain any argument, thus can be reconstructed without any modification                 
                     else:
                         new_substring = splits[0]
                         for j in range(1, splits_length):
                             new_substring += " %s"%(splits[j])  
                     
-                    # Replacing the old line with the new
-                    if substring_index > 0:
-                        new_line += pipes[substring_index -1] + new_substring
-                    else:
+                    # If this is the first substring, then the new_line value will be overridden
+                    if substring_index == 0:
                         new_line = new_substring
+                    # Else we concat it with the pipe and the new substring
+                    else:
+                        new_line += pipes[substring_index -1] + new_substring
 
-
+                if line != new_line:
+                    errors[path] += "The file contains argument order issue(s).\n"
+                        
+                # Replacing the old line with the new
                 data = data.replace(line, new_line)
-                continue
+
         return data
 
-    def change_function_order(self, data):
+    def change_function_order(self, data, path):
         """Checks if the functions are in ABC order. If not, then change the order."""
         regexp = re.compile(r'function.*')
         if regexp.search(data):
@@ -378,11 +391,14 @@ class Beautify:
             # Adding all the lines after the last function declaration to the new_data string.
             for i in range(int(functions[list(functions)[len(functions) -1]].split(';')[1]) + 1, len(lines)):
                 new_data += "%s"%(lines[i])
+
+            if new_data != data:
+                errors[path] += "The file contains function order issue(s).\n"
             return new_data
         else:
             return data
 
-    def change_variable_order(self, data):
+    def change_variable_order(self, data, path):
         regexp_local = re.compile(r'local [a-zA-Z_]+')
         regexp_standard = re.compile(r'[a-zA-Z_]+=')
         lines = data.split('\n')
@@ -411,14 +427,28 @@ class Beautify:
         if path == "-":
             data = sys.stdin.read()
             result, error = self.beautify_string(data, "(stdin)")
-            result = self.change_argument_order(result)
-            result = self.change_function_order(result)
+
+            if self.argument_order:
+                result = self.change_argument_order(result, path)
+            if self.function_order and self.apply_function_style == 1:
+                result = self.change_function_order(result, path)
+            elif self.function_order and self.apply_function_style != 1:
+                errors[path] += "Function ordering does not support the provided function style.\n"
+                error = True
+                
             sys.stdout.write(result)
         else:  # named file
             data = self.read_file(path)
             result, error = self.beautify_string(data, path)
-            result = self.change_argument_order(result)
-            result = self.change_function_order(result)
+
+            if self.argument_order:
+                result = self.change_argument_order(result, path)
+            if self.function_order and self.apply_function_style == 1:
+                result = self.change_function_order(result, path)
+            elif self.function_order and self.apply_function_style != 1:
+                errors[path] += "Function ordering does not support the provided function style.\n"
+                error = True
+
             if data != result:
                 if self.check_only:
                     if not error:
@@ -426,13 +456,22 @@ class Beautify:
                         # well formatted:
                         error = result != data
                         # print out the changes
-                        print("%s\n"%(path))
-                        for line in difflib.unified_diff(data.split('\n'), result.split('\n'), lineterm=''):
-                            print(line)
                 else:
                     if self.backup:
                         self.write_file(path + ".bak", data)
                     self.write_file(path, result)
+        
+        if self.english:
+            try:
+                result.encode(encoding='utf-8').decode('ascii')
+            except UnicodeDecodeError:
+                errors[path] += "The file contains non English characters.\n"
+                error = True
+
+        if error:
+            print(Fore.CYAN + "%s\n"%(path) + Fore.RESET)
+            self.print_diff(data, result)
+
         return error
 
     def color_diff(self, diff):
@@ -532,6 +571,24 @@ class Beautify:
         )
         parser.add_argument("--help", "-h", action="store_true", help="Print this help message.")
         parser.add_argument(
+            "--argument-order",
+            "-a",
+            action="store_true",
+            help="Beautysh will reorder arguments to be in ABC order." " Eval lines currently not supported.",
+        )
+        parser.add_argument(
+            "--function-order",
+            "-f",
+            action="store_true",
+            help="Beautysh will reorder functions to be in ABC order." " Only fnonly functions are supported.",
+        )
+        parser.add_argument(
+            "--english",
+            "-e",
+            action="store_true",
+            help="Beautysh will check if the file contains non English characters.",
+        )
+        parser.add_argument(
             "files",
             metavar="FILE",
             nargs="*",
@@ -554,6 +611,9 @@ class Beautify:
         self.tab_size = args.indent_size
         self.backup = args.backup
         self.check_only = args.check
+        self.argument_order = args.argument_order
+        self.function_order = args.function_order
+        self.english = args.english
         if args.tab:
             self.tab_size = 1
             self.tab_str = "\t"
@@ -566,7 +626,21 @@ class Beautify:
         if "NO_COLOR" in os.environ:
             self.color = False
         for path in args.files:
+            errors[path] = ""
             error |= self.beautify_file(path)
+
+        if  args.check:
+            print("\nSummary:")
+            if error:
+                for file in sorted(errors):
+                    if errors[file] != "":
+                        print(Fore.CYAN + "  %s:"%(file) + Fore.RESET)
+                        for file_error in errors[file].split('\n'):
+                            if file_error != "":
+                                print(Fore.RED + "    - %s"%(file_error) + Fore.RESET)
+            else:
+                print(Fore.GREEN + "No error found." + Fore.RESET)
+
         sys.exit((0, 1)[error])
 
 
