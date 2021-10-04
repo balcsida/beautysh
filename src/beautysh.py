@@ -41,7 +41,9 @@ class Beautify:
         self.color = True
         self.argument_order = False
         self.function_order = False
+        self.variable_order = False
         self.english = False
+        self.line_end = False
 
     def read_file(self, fp):
         """Read input file."""
@@ -398,28 +400,48 @@ class Beautify:
         else:
             return data
 
-    def change_variable_order(self, data, path):
-        regexp_local = re.compile(r'local [a-zA-Z_]+')
-        regexp_standard = re.compile(r'[a-zA-Z_]+=')
+    def check_variable_order(self, data, path):
+        """Checks if the variables are in order"""
         lines = data.split('\n')
-        functions={}
-        line_number=0
-        start_line_number = -1
+        changed = False
+        regexp = re.compile(r'^\s+[a-zA-z]+={1}[^=].*')
+        regexp1 = re.compile(r'^\s+local\s+[a-zA-z]+={1}[^=].*')
+        regexp2 = re.compile(r'^\s+export\s+[a-zA-z]+={1}[^=].*')
+        variables={}
 
-        for line in lines:
-            # If the line matches the regex, then we consider it as a function start
-            if regexp.search(line):
-                # Saving the function name and the line it's on
-                start_line = line.replace(" {", "").replace("function ", "")
-                start_line_number = line_number
+        for i in range(len(lines)):
+            line = lines[i]
+            if regexp.search(line) or regexp1.search(line) or regexp2.search(line):
+                variables[re.sub(r'=.*', "", line.replace(" ", "").replace("export", "").replace("local", "").replace("\t", ""))] = i
+            elif len(variables) > 0:
+                if(len(variables) > 1):
+                    if(sorted(variables) != list(variables)):
+                           for key in variables:
+                                lines[variables[key]] += " -- Please change the order/name of this variable to be in ABC order."
+                                changed = True
+                variables.clear()
+                       
+        if changed:
+            errors[path] += "The file contains variables in wrong order.\n"
 
-            # If there is already a function definition found and the line only consist of }, the script assumes that this is the end of the function
-            if start_line_number > -1 and line == "}":
-                # Saving the function name (key) and the start and stop line numbers (value)
-                functions[start_line] = "%s;%s"%(start_line_number,line_number)
-                start_line_number = -1
+        return "\n".join(lines)
 
-            line_number += 1
+    def check_last_line(self, data, path):
+        """Checks if the last line is empty"""
+        lines = data.split('\n')
+        changed = False
+
+        for i in range(len(lines) -1, 0, -1):
+            if lines[i] == "":
+                lines.pop(i)
+                changed = True
+            else:
+                break
+                       
+        if changed:
+            errors[path] += "The file contains empty last line(s)\n"
+
+        return "\n".join(lines)
 
     def beautify_file(self, path):
         """Beautify bash script file."""
@@ -435,7 +457,10 @@ class Beautify:
             elif self.function_order and self.apply_function_style != 1:
                 errors[path] += "Function ordering does not support the provided function style.\n"
                 error = True
-                
+            if self.line_end:
+                result = self.check_last_line(result, path)
+            if self.variable_order:
+                result = self.check_variable_order(result, path)
             sys.stdout.write(result)
         else:  # named file
             data = self.read_file(path)
@@ -448,7 +473,10 @@ class Beautify:
             elif self.function_order and self.apply_function_style != 1:
                 errors[path] += "Function ordering does not support the provided function style.\n"
                 error = True
-
+            if self.line_end:
+                result = self.check_last_line(result, path)
+            if self.variable_order:
+                result = self.check_variable_order(result, path)
             if data != result:
                 if self.check_only:
                     if not error:
@@ -583,8 +611,20 @@ class Beautify:
             help="Beautysh will reorder functions to be in ABC order." " Only fnonly functions are supported.",
         )
         parser.add_argument(
+            "--variable-order",
+            "-o",
+            action="store_true",
+            help="Beautysh if variables are in ABC order." " Only fnonly functions are supported.",
+        )
+        parser.add_argument(
             "--english",
             "-e",
+            action="store_true",
+            help="Beautysh will check if the file contains non English characters.",
+        )
+        parser.add_argument(
+            "--line-end",
+            "-l",
             action="store_true",
             help="Beautysh will check if the file contains non English characters.",
         )
@@ -614,6 +654,8 @@ class Beautify:
         self.argument_order = args.argument_order
         self.function_order = args.function_order
         self.english = args.english
+        self.line_end = args.line_end
+        self.variable_order = args.variable_order
         if args.tab:
             self.tab_size = 1
             self.tab_str = "\t"
