@@ -44,6 +44,7 @@ class Beautify:
         self.variable_order = False
         self.english = False
         self.line_end = False
+        self.exit_code_check = False
 
     def read_file(self, fp):
         """Read input file."""
@@ -400,6 +401,21 @@ class Beautify:
         else:
             return data
 
+    def check_line_break_before_exit_code(self, data, path):
+        """Checks if there is any empty line before the exit command"""
+        lines = data.split('\n')
+        changed = False
+        regexp = re.compile(r'^\s*exit [0-9]*')
+
+        for i in range(len(lines)):
+            if regexp.search(lines[i]) and lines[i - 1] != "" and "function" not in lines[i - 1] and "then" != lines[i - 1] and "do" != lines[i - 1]:
+                lines[i] = "\n%s"%(lines[i])
+
+        if changed:
+            errors[path] += "The file contains exit commands without empty line before them.\n"
+
+        return "\n".join(lines)
+
     def check_variable_order(self, data, path):
         """Checks if the variables are in order"""
         lines = data.split('\n')
@@ -461,6 +477,8 @@ class Beautify:
                 result = self.check_last_line(result, path)
             if self.variable_order:
                 result = self.check_variable_order(result, path)
+            if self.exit_code_check:
+                result = self.check_line_break_before_exit_code(result, path)
             sys.stdout.write(result)
         else:  # named file
             data = self.read_file(path)
@@ -477,6 +495,8 @@ class Beautify:
                 result = self.check_last_line(result, path)
             if self.variable_order:
                 result = self.check_variable_order(result, path)
+            if self.exit_code_check:
+                result = self.check_line_break_before_exit_code(result, path)
             if data != result:
                 if self.check_only:
                     if not error:
@@ -623,6 +643,12 @@ class Beautify:
             help="Beautysh will check if the file contains non English characters.",
         )
         parser.add_argument(
+            "--exit-code",
+            "-x",
+            action="store_true",
+            help="Beautysh will check if every exit code has an empty line before them (except those which does not have a command before them).",
+        )
+        parser.add_argument(
             "--line-end",
             "-l",
             action="store_true",
@@ -656,6 +682,7 @@ class Beautify:
         self.english = args.english
         self.line_end = args.line_end
         self.variable_order = args.variable_order
+        self.exit_code_check = args.exit_code
         if args.tab:
             self.tab_size = 1
             self.tab_str = "\t"
