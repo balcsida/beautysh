@@ -123,6 +123,10 @@ class Beautify:
         for record in re.split("\n", data):
             record = record.rstrip()
             stripped_record = record.strip()
+            continued_if = False
+
+            if (re.search(r'.*&{1,2}|.*\|{1,2}$', record)):
+                continued_if = True
 
             # preserve blank lines
             if not stripped_record:
@@ -160,7 +164,6 @@ class Beautify:
                 if re.search(here_string, test_record) and not re.search(r"<<", test_record):
                     in_here_doc = False
             else:  # not in here doc or inside multiline-quoted
-
                 if continue_line:
                     if prev_line_had_continue:
                         # this line is not STARTING a multiline-quoted string...
@@ -208,7 +211,7 @@ class Beautify:
                         continue
 
                     # multi-line conditions are often meticulously formatted
-                    if open_brackets:
+                    if open_brackets or continued_if:
                         output.append(record)
                     else:
                         inc = len(re.findall(r"(\s|\A|;)(case|then|do)(;|\Z|\s)", test_record))
@@ -256,8 +259,7 @@ class Beautify:
                         net = inc - outc
                         tab += min(net, 0)
 
-                        # while 'tab' is preserved across multiple lines,
-                        # 'extab' is not and is used for some adjustments:
+                        # while 'tab' idasdas and is used for some adjustments:
                         extab = tab + else_case + choice_case
                         if (
                             prev_line_had_continue
@@ -265,9 +267,11 @@ class Beautify:
                             and not ended_multiline_quoted_string
                         ):
                             extab += 1
+
                         extab = max(0, extab)
                         output.append((self.tab_str * self.tab_size * extab) + stripped_record)
                         tab += max(net, 0)
+
                 if defer_ext_quote:
                     in_ext_quote = True
                     defer_ext_quote = False
