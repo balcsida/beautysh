@@ -281,6 +281,53 @@ class Beautify:
             sys.stderr.write("File %s: error: indent/outdent mismatch: %d.\n" % (path, tab))
         return "\n".join(output), error
 
+    def reorder_arguments(self, regexp, value, black_list):
+        """Changes the Argument order to be in alphabetical."""
+        splits = value.split(' ')
+        splits_length = len(splits)
+        arguments={}
+        first_index = 0
+
+        # If the substring matches the regex, it means that the string contains at least one argument
+        if regexp.search(value):
+            for j in range(1, splits_length):
+                # If the split matches the regex, then it's an argument
+                if regexp.search(" %s"%(splits[j])):
+                    # Sometimes there are function letters, which need to be addressed
+                    if(first_index == 0):
+                        first_index = j
+                    # If the next split contains any of the blacklisted character or is an argument, then no value pair required
+                    if(j + 1 == splits_length or (splits[j + 1][:1] != '"' and splits[j + 1][:2] != "\\\"" and (any(c in black_list for c in splits[j + 1]) or regexp.search(" %s"%(splits[j + 1]))))):
+                        arguments[splits[j]] = ""
+                        # Increment the last index, so we know where was the last argument
+                        last_index = j
+                    else:
+                        arguments[splits[j]] = " %s"%(splits[j + 1])
+                        # Increment the last index, so we know where was the last argument
+                        last_index = j + 1
+            # The first split will always be the command/script call
+            new_substring = splits[0]
+            # Adding the function letters back to the beginning of the line
+            for j in range(1, first_index):
+                new_substring += " %s"%(splits[j])
+            # Ordering the selected arguments by ABC and putting them in with their value pairs
+            for ordered_agrument in sorted([re.sub(r'^-*', '', w) for w in arguments]):
+                if "-%s"%(ordered_agrument) in arguments:
+                    ordered_agrument = "-%s"%(ordered_agrument)
+                elif "--%s"%(ordered_agrument) in arguments:
+                    ordered_agrument = "--%s"%(ordered_agrument)
+                new_substring += " %s%s"%(ordered_agrument,arguments[ordered_agrument])
+            # The range between the last argument index and the length of the split is the non argument values
+            for j in range(last_index + 1, len(splits)):
+                new_substring += " %s"%(splits[j])
+        # Else the substring does not contain any argument, thus can be reconstructed without any modification
+        else:
+            new_substring = splits[0]
+            for j in range(1, splits_length):
+                new_substring += " %s"%(splits[j])
+
+        return new_substring
+
     def change_argument_order(self, data, path):
         """Checks if the argument calls are in ABC order in the line. If not, then change the order."""
         regexp = re.compile(r' -{1,2}[a-zA-Z]+')
@@ -290,55 +337,35 @@ class Beautify:
             # If the line contains the [ character, then it's most likely an If statement, which could give us false positive
             # eval lines are currently not supported
             if not "[" in line and not "eval" in line and regexp.search(line): 
-                # Spliting the line into substrings by pipe or & characters
-                substrings = re.split(' [|&]{1,2} ',line)
-                # Saving the | and & characters for reconstruction
-                pipes = re.findall(' [|&]{1,2} ',line)
-                
-                for substring_index in range(len(substrings)):
-                    first_index = 0
-                    # Spliting the substring by spaces
-                    splits = substrings[substring_index].split(' ')
-                    splits_length = len(splits)
-                    arguments={}
+                subshells = {}
+                new_line = line
 
-                    # If the substring matches the regex, it means that the string contains at least one argument
-                    if regexp.search(substrings[substring_index]):
-                        for j in range(1, splits_length):
-                            # If the split matches the regex, then it's an argument
-                            if regexp.search(" %s"%(splits[j])):
-                                # Sometimes there are function letters, which need to be addressed
-                                if(first_index == 0):
-                                    first_index = j
-                                # If the next split contains any of the blacklisted character or is an argument, then no value pair required
-                                if(j + 1 == splits_length or (splits[j + 1][:1] != '"' and splits[j + 1][:2] != "\\\"" and (any(c in black_list for c in splits[j + 1]) or regexp.search(" %s"%(splits[j + 1]))))):
-                                    arguments[splits[j]] = ""
-                                    # Increment the last index, so we know where was the last argument
-                                    last_index = j
-                                else:
-                                    arguments[splits[j]] = " %s"%(splits[j + 1])
-                                    # Increment the last index, so we know where was the last argument
-                                    last_index = j + 1    
-                        # The first split will always be the command/script call
-                        new_substring = splits[0]
-                        # Adding the function letters back to the beginning of the line
-                        for j in range(1, first_index):
-                            new_substring += " %s"%(splits[j])
-                        # Ordering the selected arguments by ABC and putting them in with their value pairs
-                        for ordered_agrument in sorted([re.sub(r'^-*', '', w) for w in arguments]):
-                            if "-%s"%(ordered_agrument) in arguments:
-                                ordered_agrument = "-%s"%(ordered_agrument)
-                            elif "--%s"%(ordered_agrument) in arguments:
-                                ordered_agrument = "--%s"%(ordered_agrument)
-                            new_substring += " %s%s"%(ordered_agrument,arguments[ordered_agrument])
-                        # The range between the last argument index and the length of the split is the non argument values
-                        for j in range(last_index + 1, len(splits)):
-                            new_substring += " %s"%(splits[j])         
-                    # Else the substring does not contain any argument, thus can be reconstructed without any modification                 
-                    else:
-                        new_substring = splits[0]
-                        for j in range(1, splits_length):
-                            new_substring += " %s"%(splits[j])  
+                # Collecting the subshells
+                for a in (re.findall(' -{1,2}[a-zA-Z] \$\(.*\)', line)):
+                    for b in a.split(")"):
+                        if("" != b):
+                            b = b + ")"
+                            keys = re.findall('(-{1,2}[a-zA-Z]) \$', b)
+                            values = re.findall('\$\(.*\)', b)
+
+                            for i in range(len(keys)):
+                                subshells[keys[i]] = values[i]
+                
+                # Deleting subshells from the line
+                for value in subshells.values():
+                    new_line = new_line.replace(value, "")
+
+                for key in subshells.keys():
+                    value = str(subshells[key])[2:-1]
+                    subshells[key] = self.reorder_arguments(regexp, value, black_list)
+
+                # Spliting the line into substrings by pipe or & characters
+                substrings = re.split(' [|&]{1,2} ',new_line)
+                # Saving the | and & characters for reconstruction
+                pipes = re.findall(' [|&]{1,2} ',new_line)
+
+                for substring_index in range(len(substrings)):
+                    new_substring = self.reorder_arguments(regexp, substrings[substring_index], black_list)
                     
                     # If this is the first substring, then the new_line value will be overridden
                     if substring_index == 0:
@@ -347,6 +374,11 @@ class Beautify:
                     else:
                         new_line += pipes[substring_index -1] + new_substring
 
+                
+                for key in subshells.keys():
+                    new_line = new_line.replace(key, "%s $(%s)"%(key, subshells[key]))
+
+                new_line = re.sub(r'\s+$', '', new_line.replace(")  ", ") "))
                 if line != new_line:
                     errors[path] += "The file contains argument order issue(s).\n"
                         
@@ -400,17 +432,17 @@ class Beautify:
             return new_data
         else:
             return data
-
+    
     def check_line_break_before_exit_code(self, data, path):
         """Checks if there is any empty line before the exit command"""
         lines = data.split('\n')
-        changed = False
+        changed = False 
         regexp = re.compile(r'^\s*exit [0-9]*')
 
         for i in range(len(lines)):
             if regexp.search(lines[i]) and lines[i - 1] != "" and "function" not in lines[i - 1] and "then" != lines[i - 1] and "do" != lines[i - 1]:
                 lines[i] = "\n%s"%(lines[i])
-
+                       
         if changed:
             errors[path] += "The file contains exit commands without empty line before them.\n"
 
