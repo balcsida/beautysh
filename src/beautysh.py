@@ -417,11 +417,17 @@ class Beautify:
                 new_data += "%s\n"%(lines[i])
 
             # Adding the ordered functions to the new_data string.
-            for function in sorted(functions):
-                split = functions[function].split(';')
-                for i in range(int(split[0]), int(split[1]) + 1):
-                    new_data += "%s\n"%(lines[i])
-                new_data += "\n"
+            sorted_functions = sorted(functions)
+            sorted_functions_length = len(sorted_functions)
+            for i in range(sorted_functions_length):
+                split = functions[sorted_functions[i]].split(';')
+                for j in range(int(split[0]), int(split[1]) + 1):
+                    line_end = ""
+                    if lines[j] != "}":
+                        line_end = "\n"
+                    new_data += "%s%s"%(lines[j],line_end)
+                if i < sorted_functions_length - 1:
+                    new_data += "\n\n"
 
             # Adding all the lines after the last function declaration to the new_data string.
             for i in range(int(functions[list(functions)[len(functions) -1]].split(';')[1]) + 1, len(lines)):
@@ -429,6 +435,7 @@ class Beautify:
 
             if new_data != data:
                 errors[path] += "The file contains function order issue(s).\n"
+
             return new_data
         else:
             return data
